@@ -48,7 +48,6 @@ static BUCKETS_PER_WORD: uint = uint::BITS / BITS_PER_BUCKET;
 
 /// Returns a tuple of (array index, lsr shift amount) to get to the bits you
 /// need. Don't forget to mask with 0xF!
-#[inline(always)]
 fn bucket_index_to_array_index(bucket_index: uint) -> (uint, uint) {
     let arr_index = bucket_index / BUCKETS_PER_WORD;
     let shift_amount = (bucket_index % BUCKETS_PER_WORD) * BITS_PER_BUCKET;
@@ -72,7 +71,6 @@ fn to_rng(hash: u64) -> rand::XorShiftRng {
     rand::SeedableRng::from_seed([ 0x97830e05, 0x113ba7bb, bottom, top ])
 }
 
-#[inline(always)]
 fn stretch<'a>(r: &'a mut rand::XorShiftRng)
   -> iter::Take<rand::Generator<'a, uint, rand::XorShiftRng>> {
     r.gen_iter().take(NUMBER_OF_HASHES)
@@ -100,26 +98,22 @@ impl BloomFilter {
     /// Since the array length must be a power of two, this will return a
     /// bitmask that can be `&`ed with a number to bring it into the range of
     /// the array.
-    #[inline(always)]
     fn mask(&self) -> uint {
         (self.buf.len()*BUCKETS_PER_WORD) - 1 //guaranteed to be a power of two
     }
 
     /// Converts a stretched hash into a bucket index.
-    #[inline(always)]
     fn shash_to_bucket_index(&self, shash: uint) -> uint {
         shash & self.mask()
     }
 
     /// Converts a stretched hash into an array and bit index. See the comment
     /// on `bucket_index_to_array_index` for details about the return value.
-    #[inline(always)]
     fn shash_to_array_index(&self, shash: uint) -> (uint, uint) {
         bucket_index_to_array_index(self.shash_to_bucket_index(shash))
     }
 
     /// Gets the value at a given bucket.
-    #[inline(always)]
     fn bucket_get(&self, a_idx: uint, shift_amount: uint) -> uint {
         let array_val = self.buf[a_idx];
         (array_val >> shift_amount) & 0xF
@@ -168,7 +162,6 @@ impl BloomFilter {
     /// Inserts a value into the bloom filter. Note that the bloom filter isn't
     /// parameterized over the values it holds. That's because it can hold
     /// values of different types, as long as it can get a hash out of them.
-    #[inline]
     pub fn insert<H: Hash>(&mut self, h: &H) {
         self.insert_hashed(hash(h))
     }
@@ -206,7 +199,6 @@ impl BloomFilter {
     /// long intervals.
     ///
     /// It is an error to remove never-inserted elements.
-    #[inline]
     pub fn remove<H: Hash>(&mut self, h: &H) {
         self.remove_hashed(hash(h))
     }
@@ -221,12 +213,17 @@ impl BloomFilter {
     /// A hash is definitely excluded iff none of the stretched hashes are in
     /// the bloom filter.
     fn definitely_excludes_hashed(&self, hash: u64) -> bool {
-        stretch(&mut to_rng(hash)).any(|h| self.definitely_excludes_shash(h))
+        let mut ret = false;
+
+        for shash in stretch(&mut to_rng(hash)) {
+            ret |= self.definitely_excludes_shash(shash);
+        }
+
+        ret
     }
 
     /// A bloom filter can tell you whether or not a value has definitely never
     /// been inserted. Note that bloom filters can give false positives.
-    #[inline]
     pub fn definitely_excludes<H: Hash>(&self, h: &H) -> bool {
         self.definitely_excludes_hashed(hash(h))
     }
@@ -234,20 +231,17 @@ impl BloomFilter {
     /// A bloom filter can tell you if an element /may/ be in it. It cannot be
     /// certain. But, assuming correct usage, this query will have a low false
     // positive rate.
-    #[inline]
     pub fn may_include<H: Hash>(&self, h: &H) -> bool {
         !self.definitely_excludes(h)
     }
 
     /// Returns the number of elements ever inserted into the bloom filter - the
     /// number of elements removed.
-    #[inline(always)]
     pub fn number_of_insertions(&self) -> uint {
         self.number_of_insertions
     }
 
     /// Returns the number of bytes of memory the bloom filter uses.
-    #[inline(always)]
     pub fn size(&self) -> uint {
         self.buf.len() * uint::BYTES
     }
@@ -353,14 +347,33 @@ mod bench {
     fn insert(b: &mut test::Bencher) {
         let mut bf = BloomFilter::new(1000);
 
-        let mut i = 0u;
-
         b.bench_n(1000, |b| {
+            let mut i = 0u;
+
             b.iter(|| {
                 test::black_box(bf.insert(&i));
                 i += 1;
             });
         });
+    }
+
+    #[bench]
+    fn remove(b: &mut test::Bencher) {
+        let mut bf = BloomFilter::new(1000);
+        for i in range(0u, 1000) {
+            bf.insert(&i);
+        }
+
+        b.bench_n(1000, |b| {
+            let mut i = 0u;
+
+            b.iter(|| {
+                bf.remove(&i);
+                i += 1;
+            });
+        });
+
+        test::black_box(bf.may_include(&0u));
     }
 
     #[bench]
