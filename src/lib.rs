@@ -16,6 +16,7 @@ use std::uint;
 /// remove elements from a set, query the set for whether it may contain an
 /// element or definitely exclude it, and uses much less ram than an equivalent
 /// hashtable.
+#[deriving(Clone)]
 pub struct BloomFilter {
     buf: Vec<uint>,
     number_of_insertions: uint,
